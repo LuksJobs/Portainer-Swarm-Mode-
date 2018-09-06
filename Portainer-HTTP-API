@@ -1,0 +1,137 @@
+1.0 PortainerHTTP/API
+
+    Este documento apresenta uma maneira simples de gerenciar seu recurso do Docker usando o Portainer como 
+    um gateway (consultas HTTP na API do Portainer).
+    
+    Endpoints:
+    Simplificando, um endpoint é uma extremidade de um canal de comunicação. Quando uma API interage com 
+    outro sistema, os pontos de contato dessa comunicação são considerados pontos de extremidade (endpoint)
+    
+    NOTA: Estou usando o httpie (apt-get install httpie) para executar consultas HTTP da CLI 
+    (Interface de linha de comandos).
+
+1.1 Implantando uma instância do Portainer
+
+    Nota: Estou vinculando o Socket do Docker para poder gerenciar o mecanismo local em que o Portainer 
+    está sendo executado.
+
+    $ docker run -d -p 9000:9000 -v /var/run/docker.sock:/var/run/docker.sock portainer/portainer
+    Docker Sock, é o soquete unix que o daemon do Docker escuta por padrão e pode ser usado para se comunicar 
+    com o daemon de dentro de um contêiner.
+
+1.2 Inicialize a senha do administrador
+    
+    $ http POST :9000/api/users/admin/init Username="admin" Password="adminpassword"
+
+1.3 Autenticando com a API usando a conta de administrador
+
+    $ http POST :9000/api/auth Username="admin" Password="adminpassword"
+
+    Se tudo ocorrer bem a resposta será um objeto JSON contendo o token JWT dentro do campo jwt:    
+    {
+      "jwt":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOjEsImV4cCI6MTQ5OTM3NjE1NH0.NJ6vE8FY1WG6jsRQzfMqeatJ4vh2TWAeeYfDhP71YEE"
+    }
+
+    Você precisa recuperar este token que foi gerado. Você precisará copiar esse token para dentro do cabeçalho 
+    "Authorization" ao executar uma consulta de autenticação na API.
+
+    OBSERVAÇÃO: esse token tem uma validade de 8 horas, você precisará gerar outro token para executar 
+    consultas autenticadas quando este expirar.
+
+1.4 Crie um novo endpoint
+    Aqui, mostrarei como criar um endpoint local.
+    Essa consulta criará um endpoint chamado test-local e usará o soquete do Docker para se 
+    comunicar com esse ambiente. NOTA: Este exemplo exige que você ligue o soquete Docker ao executar o Portainer.
+
+    $ http --form POST :9000/api/endpoints \
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOjEsImV4cCI6MTQ5OTM3NjE1NH0.NJ6vE8FY1WG6jsRQzfMqeatJ4vh2TWAeeYfDhP71YEE" \
+    Name="test-local" URL="unix:///var/run/docker.sock" EndpointType=1
+
+    A resposta é um objeto JSON que representa o terminal, por exemplo:
+
+    "AuthorizedTeams": [], 
+    "AuthorizedUsers": [], 
+    "Extensions": [], 
+    "GroupId": 1, 
+    "Id": 1, 
+    "Name": "test-local", 
+    "PublicURL": "",
+    "Type": 1,
+    "TLSConfig": {
+        "TLS": false, 
+        "TLSSkipVerify": false
+    }, 
+    "Type": 1, 
+    "URL": "unix:///var/run/docker.sock"
+    
+    Copie o valor da propriedade Id, ela será usada para executar consultas no 
+    mecanismo do Docker para esse terminal, como por exemplo, no próximo passo abaixo.
+
+1.5 Execute consultas do Docker em um terminal específico
+    Usando o seguinte endpoint /api/endpoints/<ENDPOINT_ID>/docker da API de HTTP do Portainer, 
+    agora você pode executar qualquer uma das solicitações da API de HTTP do Docker.
+
+    Esse endpoint da API HTTP do Portainer atua como um proxy reverso para a API HTTP do Docker.
+    Por exemplo, aqui está como você pode listar todos os contêineres disponíveis em um endpoint específico:
+
+    $ http GET :9000/api/endpoints/1/docker/containers/json \
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOjEsImV4cCI6MTQ5OTM3NjE1NH0.NJ6vE8FY1WG6jsRQzfMqeatJ4vh2TWAeeYfDhP71YEE" \
+    all==true
+
+    A resposta é exatamente igual à retornada pela operação ContainerList da API do Docker, consulte a documentação da operação ContainerList.
+
+1.6 Crie um contêiner
+    Veja como você pode criar um contêiner em um terminal específico usando a API HTTP do Portainer como um gateway.
+    
+    No exemplo abaixo criaremos um novo contêiner Docker dentro do terminal usando o ID 1. O contêiner será denominado web01
+    , usando a imagem nginx:latest utilizando a porta do contêiner 80 por meio da porta 8080 no host.
+
+    $ http POST :9000/api/endpoints/1/docker/containers/create \
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOjEsImV4cCI6MTQ5OTM3NjE1NH0.NJ6vE8FY1WG6jsRQzfMqeatJ4vh2TWAeeYfDhP71YEE" \
+    name=="web01" Image="nginx:latest" \
+    ExposedPorts:='{ "80/tcp": {} }' \
+    HostConfig:='{ "PortBindings": { "80/tcp": [{ "HostPort": "8080" }] } }'
+
+    A resposta é exatamente a mesma retornada pela operação ContainerCreate da API do Docker.
+
+    Exemplo:
+    
+    {
+    "Id": "5fc2a93d7a3d426a1c3937436697fc5e5343cc375226f6110283200bede3b107",
+    "Warnings": null
+    }
+
+    Salve o ID do contêiner, você precisará dele para executar ações nesse contêiner.
+1.7 Inciando o Container
+    Agora você pode iniciar o contêiner que você criou anteriormente usando o terminal:
+    /api/endpoints/<ENDPOINT_ID>/docker/containers/<CONTAINER_ID>/start (verifique se você recuperou o ID do container criado anteriormente):
+
+    $ http POST :9000/api/endpoints/1/docker/containers/5fc2a93d7a3d426a1c3937436697fc5e5343cc375226f6110283200bede3b107/start \
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOjEsImV4cCI6MTQ5OTM3NjE1NH0.NJ6vE8FY1WG6jsRQzfMqeatJ4vh2TWAeeYfDhP71YEE"
+
+    A resposta é exatamente igual à retornada pela operação ContainerStart da API do Docker, consulte a documentação da operação ContainerStart.
+1.8 Deploy de um repositório Git 
+    Este exemplo de comando criará uma nova stack dentro do nó do endpoint com o ID 1. A stack será nomeada
+     myTestStack, usando o arquivo Stack armazenado no repositório Git público .
+
+    $ http POST ':9000/api/stacks?method=repository&type=1&endpointId=1' \
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOjEsImV4cCI6MTUyOTY3NDE1Mn0.wyyck_iktvOrYsuH0Xrvgifoi83emsszipSTYkDvuaE" \
+    Name="myTestStack" \
+    SwarmID="k427pd86wfkgp40ksrmbojrwq" \
+    RepositoryURL="https://github.com/portainer/templates" \
+    ComposeFilePathInRepository="stacks/cockroachdb/docker-stack.ym
+
+    A resposta é um objeto JSON que representa a stack recém-criada:
+
+    {
+    "EndpointId": 1, 
+    "EntryPoint": "stacks/cockroachdb/docker-stack.yml", 
+    "Env": null, 
+    "Id": 1, 
+    "Name": "myTestStack", 
+    "ProjectPath": "/data/compose/\u0002", 
+    "SwarmId": "tdv7rl1u3965ml272o2q6d96z", 
+    "Type": 1
+    }
+
+    Recupere o identificador da stack na propriedade Id, você precisará dele para gerenciar a stack.

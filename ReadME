@@ -1,0 +1,21 @@
+O portainer é uma aplicação de gerenciamento de containers que possui Interface Gráfica (Web) onde roda localmente como container (dentro do Docker ou Cluster Swarm) e é possível gerenciar
+as imagens, entre diversas outras opções;
+
+Neste caso utilizaremos o docker-compose para implantar o Portainer:
+
+version: '2'
+
+services:
+  portainer:
+    image: portainer/portainer
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+volumes:
+  portainer_data:
+
+
+> Note: a porta setada na configuração padrão do portainer é a porta 9000;
+> Depois de instalado você só precisa acessar a porta 9000 do mecanismo do Docker em que o portainer está sendo executado usando seu navegador.
